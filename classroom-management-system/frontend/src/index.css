@@ -1,0 +1,102 @@
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+  font-family: Arial;
+}
+
+body {
+  background: #0d0d0d;
+  color: white;
+}
+
+.container {
+  width: 90%;
+  margin: auto;
+  padding: 30px;
+}
+
+h1 {
+  text-align: center;
+  color: red;
+  margin-bottom: 30px;
+  font-size: 40px;
+}
+
+.form {
+  display: flex;
+  gap: 15px;
+  justify-content: center;
+  margin-bottom: 40px;
+  flex-wrap: wrap;
+}
+
+.form input {
+  padding: 15px;
+  width: 250px;
+  border: none;
+  border-radius: 10px;
+  background: #1a1a1a;
+  color: white;
+  font-size: 16px;
+}
+
+.form button {
+  padding: 15px 25px;
+  background: red;
+  border: none;
+  border-radius: 10px;
+  color: white;
+  cursor: pointer;
+  font-size: 16px;
+  transition: 0.3s;
+}
+
+.form button:hover {
+  background: darkred;
+}
+
+.student-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+  gap: 20px;
+}
+
+.card {
+  background: #1a1a1a;
+  padding: 20px;
+  border-radius: 15px;
+  border: 1px solid red;
+  box-shadow: 0 0 15px rgba(255, 0, 0, 0.3);
+}
+
+.card h2 {
+  color: red;
+  margin-bottom: 10px;
+}
+
+.card p {
+  margin-bottom: 15px;
+}
+
+.buttons {
+  display: flex;
+  gap: 10px;
+}
+
+.edit-btn {
+  background: crimson;
+}
+
+.delete-btn {
+  background: black;
+  border: 1px solid red;
+}
+
+.buttons button {
+  flex: 1;
+  padding: 10px;
+  color: white;
+  border-radius: 8px;
+  cursor: pointer;
+}
