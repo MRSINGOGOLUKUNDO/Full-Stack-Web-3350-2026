@@ -7,6 +7,7 @@ const API = "http://localhost:5000/auth";
 function Login() {
   const [mode, setMode] = useState("login");
   const [username, setUsername] = useState("");
+  const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [confirm, setConfirm] = useState("");
   const [showPassword, setShowPassword] = useState(false);
@@ -18,7 +19,7 @@ function Login() {
   const navigate = useNavigate();
 
   const reset = () => {
-    setUsername(""); setPassword(""); setConfirm("");
+    setUsername(""); setEmail(""); setPassword(""); setConfirm("");
     setError(""); setSuccess("");
     setShowPassword(false); setShowConfirm(false);
   };
@@ -32,6 +33,9 @@ function Login() {
     if (mode === "register" && password !== confirm) {
       setError("Passwords do not match."); return;
     }
+    if (mode === "register" && !email) {
+      setError("Email is required."); return;
+    }
     if (password.length < 6) {
       setError("Password must be at least 6 characters."); return;
     }
@@ -43,7 +47,7 @@ function Login() {
         localStorage.setItem("token", res.data.token);
         navigate("/");
       } else {
-        await axios.post(`${API}/register`, { username, password });
+        await axios.post(`${API}/register`, { username, email, password });
         setSuccess("Account created! You can now log in.");
         switchMode("login");
       }
@@ -93,6 +97,14 @@ function Login() {
             onChange={(e) => setUsername(e.target.value)}
             required autoComplete="username" style={inputStyle}
           />
+
+          {mode === "register" && (
+            <input
+              type="email" placeholder="Gmail address" value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              required autoComplete="email" style={inputStyle}
+            />
+          )}
 
           {/* Password with eye toggle */}
           <div style={{ position: "relative" }}>

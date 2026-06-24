@@ -19,21 +19,28 @@ const transporter = nodemailer.createTransport({
 
 // POST /auth/register
 router.post("/register", async (req, res) => {
-  const { username, password } = req.body;
-  if (!username || !password)
-    return res.status(400).json({ message: "Username and password are required." });
+  const { username, password, email } = req.body;
+  if (!username || !password || !email)
+    return res.status(400).json({ message: "Username, email, and password are required." });
   if (password.length < 6)
     return res.status(400).json({ message: "Password must be at least 6 characters." });
 
+  const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+  if (!emailRegex.test(email))
+    return res.status(400).json({ message: "Please enter a valid email address." });
+
   try {
-    const existing = await pool.query("SELECT id FROM users WHERE username = $1", [username]);
+    const existing = await pool.query(
+      "SELECT id FROM users WHERE username = $1 OR email = $2",
+      [username, email]
+    );
     if (existing.rows.length > 0)
-      return res.status(409).json({ message: "Username already taken." });
+      return res.status(409).json({ message: "Username or email already taken." });
 
     const password_hash = await bcrypt.hash(password, 10);
     await pool.query(
-      "INSERT INTO users (username, password_hash) VALUES ($1, $2)",
-      [username, password_hash]
+      "INSERT INTO users (username, email, password_hash) VALUES ($1, $2, $3)",
+      [username, email, password_hash]
     );
     res.status(201).json({ message: "Account created successfully." });
   } catch (err) {
