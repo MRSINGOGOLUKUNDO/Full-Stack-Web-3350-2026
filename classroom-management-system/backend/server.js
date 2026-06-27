@@ -21,13 +21,17 @@ app.use("/auth", authRoutes);
 
 /* GET STUDENTS */
 app.get("/students", async (req, res) => {
+  console.log("GET /students - request received");
   try {
+    console.log("GET /students - querying database...");
     const result = await pool.query(
       "SELECT * FROM students ORDER BY student_name ASC"
     );
+    console.log("GET /students - query succeeded, rows:", result.rows.length);
     res.json(result.rows);
   } catch (error) {
-    console.log(error.message);
+    console.error("GET /students - ERROR:", error.message);
+    res.status(500).json({ error: "Server error", details: error.message });
   }
 });
 
