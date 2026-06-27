@@ -2,7 +2,8 @@ import { useState } from "react";
 import { Link } from "react-router-dom";
 import axios from "axios";
 
-const API = "http://localhost:5000/auth";
+import { API_BASE_URL } from "../config";
+const API = `${API_BASE_URL}/auth`;
 
 function ForgotPassword() {
   const [step, setStep] = useState("request"); // "request" | "reset"

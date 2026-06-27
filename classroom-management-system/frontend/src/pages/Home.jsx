@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import axios from "axios";
 
 import Navbar from "../components/Navbar";
+import { API_BASE_URL } from "../config";
 
 function Home() {
 
@@ -15,7 +16,8 @@ function Home() {
 
   const [searchTerm, setSearchTerm] = useState("");
 
-  const API = "http://localhost:5000/students";
+  
+  const API = `${API_BASE_URL}/students`;
 
   // LOAD STUDENTS
   useEffect(() => {

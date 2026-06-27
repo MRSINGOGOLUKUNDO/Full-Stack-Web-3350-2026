@@ -2,7 +2,8 @@ import { useEffect, useState, useMemo, useCallback } from "react";
 import axios from "axios";
 import Navbar from "../components/Navbar";
 
-const API = "http://localhost:5000";
+import { API_BASE_URL } from "../config";
+const API = API_BASE_URL;
 
 /* ─── helpers ─────────────────────────────────────────────────────────── */
 
