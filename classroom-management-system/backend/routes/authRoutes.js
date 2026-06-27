@@ -22,8 +22,8 @@ async function getTransporter() {
 
   return nodemailer.createTransport({
     host: ip,
-    port: 587,
-    secure: false, // STARTTLS on port 587
+    port: 465,
+    secure: true, // SSL on port 465
     tls: {
       servername: "smtp.gmail.com", // keep TLS cert validation working against the real hostname
     },
