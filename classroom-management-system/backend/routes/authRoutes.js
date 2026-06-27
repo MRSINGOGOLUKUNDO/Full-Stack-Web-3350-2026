@@ -8,16 +8,20 @@ const pool = require("../db");
 
 const JWT_SECRET = process.env.JWT_SECRET || "your_jwt_secret_change_this";
 
+const dns = require("dns");
+
 // Gmail transporter — reads credentials from .env
-// Render's network can't reach Gmail over IPv6 on port 465, so we force IPv4 + port 587
+// Render's network can't reach Gmail over IPv6, so we force IPv4 resolution explicitly
 const transporter = nodemailer.createTransport({
   host: "smtp.gmail.com",
   port: 587,
   secure: false, // STARTTLS on port 587
-  family: 4,     // force IPv4 — fixes ENETUNREACH on Render
   auth: {
     user: process.env.GMAIL_USER,   // your Gmail address
     pass: process.env.GMAIL_PASS,   // your Gmail App Password
+  },
+  lookup: (hostname, options, callback) => {
+    dns.lookup(hostname, { family: 4 }, callback);
   },
 });
 
