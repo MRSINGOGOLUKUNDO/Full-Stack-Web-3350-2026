@@ -5,6 +5,12 @@ const pool = new Pool({
   ssl: {
     rejectUnauthorized: false,
   },
+  connectionTimeoutMillis: 10000, // fail fast instead of hanging forever
+  idleTimeoutMillis: 30000,
+});
+
+pool.on("error", (err) => {
+  console.error("Unexpected PG pool error:", err);
 });
 
 module.exports = pool;
