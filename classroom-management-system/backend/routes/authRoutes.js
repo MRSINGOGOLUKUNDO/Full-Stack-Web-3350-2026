@@ -9,18 +9,30 @@ const pool = require("../db");
 const JWT_SECRET = process.env.JWT_SECRET || "your_jwt_secret_change_this";
 
 const dns = require("dns");
-dns.setDefaultResultOrder("ipv4first"); // force IPv4 globally — fixes Render+Gmail SMTP ENETUNREACH
+const { promisify } = require("util");
+const resolve4 = promisify(dns.resolve4);
 
-// Gmail transporter — reads credentials from .env
-const transporter = nodemailer.createTransport({
-  host: "smtp.gmail.com",
-  port: 587,
-  secure: false, // STARTTLS on port 587
-  auth: {
-    user: process.env.GMAIL_USER,   // your Gmail address
-    pass: process.env.GMAIL_PASS,   // your Gmail App Password
-  },
-});
+// Build a transporter that connects directly to a resolved IPv4 address.
+// Render's outbound network can't reach Gmail over IPv6, and neither
+// `family: 4` nor `dns.setDefaultResultOrder` reliably prevent nodemailer
+// from picking an IPv6 address — so we resolve the A record ourselves.
+async function getTransporter() {
+  const addresses = await resolve4("smtp.gmail.com");
+  const ip = addresses[0];
+
+  return nodemailer.createTransport({
+    host: ip,
+    port: 587,
+    secure: false, // STARTTLS on port 587
+    tls: {
+      servername: "smtp.gmail.com", // keep TLS cert validation working against the real hostname
+    },
+    auth: {
+      user: process.env.GMAIL_USER,
+      pass: process.env.GMAIL_PASS,
+    },
+  });
+}
 
 // POST /auth/register
 router.post("/register", async (req, res) => {
@@ -97,6 +109,7 @@ router.post("/forgot-password", async (req, res) => {
       [resetToken, expiresAt, email]
     );
 
+    const transporter = await getTransporter();
     await transporter.sendMail({
       from: `"Classroom Management" <${process.env.GMAIL_USER}>`,
       to: email,
