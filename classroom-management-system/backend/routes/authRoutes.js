@@ -3,35 +3,37 @@ const router = express.Router();
 const bcrypt = require("bcrypt");
 const jwt = require("jsonwebtoken");
 const crypto = require("crypto");
-const nodemailer = require("nodemailer");
 const pool = require("../db");
 
 const JWT_SECRET = process.env.JWT_SECRET || "your_jwt_secret_change_this";
 
-const dns = require("dns");
-const { promisify } = require("util");
-const resolve4 = promisify(dns.resolve4);
+const RESEND_API_KEY = process.env.RESEND_API_KEY;
 
-// Build a transporter that connects directly to a resolved IPv4 address.
-// Render's outbound network can't reach Gmail over IPv6, and neither
-// `family: 4` nor `dns.setDefaultResultOrder` reliably prevent nodemailer
-// from picking an IPv6 address — so we resolve the A record ourselves.
-async function getTransporter() {
-  const addresses = await resolve4("smtp.gmail.com");
-  const ip = addresses[0];
-
-  return nodemailer.createTransport({
-    host: ip,
-    port: 465,
-    secure: true, // SSL on port 465
-    tls: {
-      servername: "smtp.gmail.com", // keep TLS cert validation working against the real hostname
+// Send email via Resend's HTTP API (port 443) instead of SMTP.
+// Render's free tier blocks outbound SMTP ports (25, 465, 587) entirely,
+// so SMTP-based sending (Nodemailer/Gmail) can never work here regardless
+// of code changes. Resend sends over plain HTTPS, which is never blocked.
+async function sendEmail({ to, subject, html }) {
+  const response = await fetch("https://api.resend.com/emails", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${RESEND_API_KEY}`,
+      "Content-Type": "application/json",
     },
-    auth: {
-      user: process.env.GMAIL_USER,
-      pass: process.env.GMAIL_PASS,
-    },
+    body: JSON.stringify({
+      from: "Classroom Management <onboarding@resend.dev>",
+      to: [to],
+      subject,
+      html,
+    }),
   });
+
+  if (!response.ok) {
+    const errorBody = await response.text();
+    throw new Error(`Resend API error (${response.status}): ${errorBody}`);
+  }
+
+  return response.json();
 }
 
 // POST /auth/register
@@ -109,9 +111,7 @@ router.post("/forgot-password", async (req, res) => {
       [resetToken, expiresAt, email]
     );
 
-    const transporter = await getTransporter();
-    await transporter.sendMail({
-      from: `"Classroom Management" <${process.env.GMAIL_USER}>`,
+    await sendEmail({
       to: email,
       subject: "Password Reset Request",
       html: `
