@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">Classroom Management System</string>
+    <string name="title_activity_main">Classroom Management System</string>
+    <string name="package_name">com.lukundo.cms</string>
+    <string name="custom_url_scheme">com.lukundo.cms</string>
+</resources>

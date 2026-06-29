@@ -1,8 +1,14 @@
 import { useEffect, useState, useMemo, useCallback } from "react";
 import axios from "axios";
 import Navbar from "../components/Navbar";
+import jsPDF from "jspdf";
+import autoTable from "jspdf-autotable";
+import { Capacitor } from "@capacitor/core";
+import { Filesystem, Directory } from "@capacitor/filesystem";
+import { Share } from "@capacitor/share";
 
 import { API_BASE_URL } from "../config";
+import { getSchoolForProgram, ALL_PROGRAMS } from "../constants/programs";
 const API = API_BASE_URL;
 
 /* ─── helpers ─────────────────────────────────────────────────────────── */
@@ -57,22 +63,30 @@ function shortLabel(dateStr) {
   return d.toLocaleDateString("en-US", { weekday: "short", day: "numeric" });
 }
 
-function toCSV(rows, semesterLabel) {
-  const header = ["Student Name", "Course", "Total Days", "Present", "Absent", "Attendance %"];
-  const body   = rows.map((r) => [
-    r.student_name, r.course, r.total_days, r.present_days, r.absent_days, r.percentage ?? "0.0",
-  ]);
-  return [
-    [`Attendance Report – ${semesterLabel}`], [],
-    header, ...body,
-  ].map((row) => row.join(",")).join("\n");
+function buildPDF(rows, semesterLabel) {
+  const doc = new jsPDF();
+
+  doc.setFontSize(16);
+  doc.text(`Attendance Report — ${semesterLabel}`, 14, 18);
+
+  autoTable(doc, {
+    startY: 26,
+    head: [["Student Name", "Course", "Total Days", "Present", "Absent", "Attendance %"]],
+    body: rows.map((r) => [
+      r.student_name, r.course, r.total_days, r.present_days, r.absent_days, `${r.percentage ?? "0.0"}%`,
+    ]),
+    headStyles: { fillColor: [30, 58, 95] },
+    styles: { fontSize: 10 },
+  });
+
+  return doc;
 }
 
 /* ─── component ────────────────────────────────────────────────────────── */
 
 function Students() {
   const currentYear  = new Date().getFullYear();
-  const yearOptions  = [currentYear - 1, currentYear, currentYear + 1];
+  const yearOptions  = Array.from({ length: 2057 - 2025 + 1 }, (_, i) => 2025 + i);
 
   const [selectedYear,   setSelectedYear]   = useState(currentYear);
   const [selectedSemIdx, setSelectedSemIdx] = useState(new Date().getMonth() < 6 ? 0 : 1);
@@ -91,12 +105,65 @@ function Students() {
   const [reportRows,     setReportRows]     = useState([]);
   const [reportLoading,  setReportLoading]  = useState(false);
 
+  /* ── Table (course) selection ── */
+  const [tables,        setTables]        = useState([]);
+  const [tablesLoaded,  setTablesLoaded]  = useState(false);
+  const [activeTable,   setActiveTable]   = useState(null); // full table object {id, school, program, course}
+  const [newProgram,    setNewProgram]    = useState(ALL_PROGRAMS[0]);
+  const [newCourse,     setNewCourse]     = useState("");
+  const [creating,      setCreating]      = useState(false);
+
+  const fetchTables = async () => {
+    try {
+      const { data } = await axios.get(`${API}/tables`);
+      setTables(data);
+    } catch (err) { console.error(err); }
+    finally { setTablesLoaded(true); }
+  };
+
+  // eslint-disable-next-line react-hooks/set-state-in-effect
+  useEffect(() => { fetchTables(); }, []);
+
+  const createTable = async (e) => {
+    e.preventDefault();
+    if (!newCourse.trim()) return;
+    setCreating(true);
+    try {
+      const school = getSchoolForProgram(newProgram);
+      const { data } = await axios.post(`${API}/tables`, {
+        school, program: newProgram, course: newCourse.trim(),
+      });
+      setNewCourse("");
+      await fetchTables();
+      setActiveTable(data);
+    } catch (err) {
+      console.error(err);
+      alert(err.response?.data?.error || "Could not create table.");
+    } finally {
+      setCreating(false);
+    }
+  };
+
+  const deleteTable = async (id) => {
+    if (!window.confirm("Delete this entire attendance table? This removes its saved attendance too.")) return;
+    try {
+      await axios.delete(`${API}/tables/${id}`);
+      setActiveTable(null);
+      await fetchTables();
+    } catch (err) { console.error(err); }
+  };
+
+  /* ── Students + attendance for the active table ── */
   useEffect(() => {
-    axios.get(`${API}/students`).then((r) => setStudents(r.data)).catch(console.error);
-  }, []);
+    if (!activeTable) return;
+    axios.get(`${API}/tables/${activeTable.id}/students`)
+      .then((r) => setStudents(r.data))
+      .catch(console.error);
+  }, [activeTable]);
 
   useEffect(() => {
-    axios.get(`${API}/attendance`, { params: { start: semester.start, end: semester.end } })
+    if (!activeTable) return;
+    axios.get(`${API}/attendance`, { params: { table_id: activeTable.id, start: semester.start, end: semester.end } })
       .then(({ data }) => {
         const map = {};
         for (const row of data) {
@@ -106,7 +173,7 @@ function Students() {
         setAttendance(map);
         setDirty(false);
       }).catch(console.error);
-  }, [semester]);
+  }, [semester, activeTable]);
 
   const toggle = useCallback((studentId, date) => {
     setAttendance((prev) => {
@@ -132,7 +199,7 @@ function Students() {
       }
     }
     try {
-      await axios.post(`${API}/attendance`, { records });
+      await axios.post(`${API}/attendance`, { table_id: activeTable.id, records });
       setDirty(false);
       setSaveMsg(`✓ Saved ${records.length} record${records.length !== 1 ? "s" : ""}`);
     } catch {
@@ -147,24 +214,55 @@ function Students() {
     setShowReport(true);
     try {
       const { data } = await axios.get(`${API}/attendance/report`, {
-        params: { start: semester.start, end: semester.end },
+        params: { table_id: activeTable.id, start: semester.start, end: semester.end },
       });
       setReportRows(data);
     } catch (err) { console.error(err); }
     finally { setReportLoading(false); }
   };
 
-  const downloadCSV = () => {
-    const blob = new Blob([toCSV(reportRows, semester.label)], { type: "text/csv" });
-    const url  = URL.createObjectURL(blob);
-    const a    = Object.assign(document.createElement("a"), {
-      href: url, download: `attendance_${semester.label.replace(/\s/g, "_")}.csv`,
-    });
-    a.click();
-    URL.revokeObjectURL(url);
+  const savePDF = async () => {
+    const doc = buildPDF(reportRows, semester.label);
+    const fileName = `attendance_${semester.label.replace(/\s/g, "_")}.pdf`;
+
+    if (Capacitor.isNativePlatform()) {
+      // Inside the Android app: a normal browser download doesn't work in a
+      // WebView, so we write the PDF to the device's cache and open the
+      // native Share sheet (Save to Files / Drive / WhatsApp / Print, etc.)
+      try {
+        const dataUri = doc.output("datauristring"); // "data:application/pdf;filename=...;base64,XXXX"
+        const base64  = dataUri.split(",").pop();
+
+        const result = await Filesystem.writeFile({
+          path: fileName,
+          data: base64,
+          directory: Directory.Cache,
+        });
+
+        await Share.share({
+          title: "Attendance Report",
+          url: result.uri,
+          dialogTitle: "Save or share your attendance report",
+        });
+      } catch (err) {
+        console.error("PDF share failed:", err);
+        setSaveMsg("✗ Could not share PDF.");
+      }
+    } else {
+      // Normal browser (e.g. testing locally on desktop) — just download it
+      doc.save(fileName);
+    }
   };
 
   const cellStatus = (sid, date) => attendance[sid]?.[date] ?? null;
+
+  const removeFromCourse = async (studentId, studentName) => {
+    if (!window.confirm(`Remove ${studentName} from this course's attendance table?`)) return;
+    try {
+      await axios.delete(`${API}/students/${studentId}/courses/${encodeURIComponent(activeTable.course)}`);
+      setStudents((prev) => prev.filter((s) => s.id !== studentId));
+    } catch (err) { console.error(err); }
+  };
 
   const isMonthEnd = (i) =>
     i === weekdays.length - 1 ||
@@ -175,7 +273,7 @@ function Students() {
       <Navbar />
 
       <style>{`
-        @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Space+Grotesk:wght@600;700&display=swap');
+        @import url('https://fonts.googleapis.com/css2?family=Bangers&family=DM+Sans:wght@400;500;600;700&family=Space+Grotesk:wght@600;700&display=swap');
 
         .att-page {
           min-height: 100vh;
@@ -186,18 +284,85 @@ function Students() {
 
         /* ── Page header ── */
         .att-header {
-          background: linear-gradient(135deg, #1e3a5f 0%, #2d6a9f 100%);
+          position: relative;
+          overflow: hidden;
           padding: 28px 32px 24px;
           color: #fff;
           margin-bottom: 28px;
+          background: linear-gradient(270deg, #1e3a5f, #6a1b9a, #2d6a9f, #1e3a5f);
+          background-size: 400% 400%;
+          animation: hueMove 10s ease infinite;
+        }
+        @keyframes hueMove {
+          0%   { background-position: 0% 50%; }
+          50%  { background-position: 100% 50%; }
+          100% { background-position: 0% 50%; }
         }
         .att-header h1 {
-          font-family: 'Space Grotesk', sans-serif;
-          font-size: 26px;
-          margin: 0 0 4px;
-          letter-spacing: -0.5px;
+          font-family: 'Bangers', cursive;
+          font-size: 48px;
+          letter-spacing: 1px;
+          margin: 0 0 6px;
+          color: #ff3b3b;
+          text-shadow:
+            3px 3px black,
+            6px 6px red;
         }
-        .att-header p { margin: 0; font-size: 13px; opacity: 0.75; }
+        .att-header p { margin: 0; font-size: 13px; opacity: 0.85; }
+
+        .active-table-meta {
+          display: flex; flex-wrap: wrap; gap: 18px; align-items: center;
+          font-size: 13px; margin-top: 6px;
+        }
+        .active-table-meta span { background: rgba(255,255,255,0.12); padding: 6px 12px; border-radius: 8px; }
+        .back-to-tables-btn {
+          margin-left: auto; padding: 6px 14px; border: none; border-radius: 8px;
+          background: #fff; color: #1e3a5f; font-weight: 700; cursor: pointer;
+        }
+
+        .tables-landing { padding: 0 4px; }
+        .create-table-form {
+          background: #fff; border-radius: 14px; padding: 20px 24px; margin-bottom: 24px;
+          box-shadow: 0 4px 16px rgba(0,0,0,0.08);
+        }
+        .create-table-form h3 { margin: 0 0 12px; color: #1e3a5f; font-size: 16px; }
+        .create-table-row { display: flex; gap: 10px; flex-wrap: wrap; }
+        .create-table-row select, .create-table-row input {
+          padding: 10px 12px; border-radius: 8px; border: 1.5px solid #d1dce8; font-size: 13px;
+        }
+        .create-table-row input { flex: 1; min-width: 200px; }
+        .create-table-row button {
+          padding: 10px 20px; border: none; border-radius: 8px;
+          background: linear-gradient(270deg, #001f3f, #003366, #00050d, #001f3f);
+          background-size: 400% 400%; animation: navyMove2 9s ease infinite;
+          color: #fff; font-weight: 700; cursor: pointer;
+        }
+        @keyframes navyMove2 {
+          0% { background-position: 0% 50%; } 50% { background-position: 100% 50%; } 100% { background-position: 0% 50%; }
+        }
+        .school-preview { margin: 10px 0 0; font-size: 12px; color: #64748b; }
+
+        .no-table-msg {
+          color: #fff; background: rgba(0,0,0,0.25); padding: 16px 20px;
+          border-radius: 10px; font-style: italic;
+        }
+
+        .tables-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 14px; }
+        .table-card {
+          position: relative; cursor: pointer; padding: 18px 18px 16px;
+          border-radius: 12px; color: #fff;
+          background: linear-gradient(270deg, #001f3f, #003366, #00050d, #001f3f);
+          background-size: 400% 400%; animation: navyMove2 10s ease infinite;
+          box-shadow: 0 4px 14px rgba(0,0,0,0.35);
+        }
+        .table-card-course { font-weight: 800; font-size: 15px; margin-bottom: 6px; }
+        .table-card-meta { font-size: 12px; opacity: 0.85; }
+        .table-card-school { font-size: 11px; opacity: 0.65; margin-top: 4px; }
+        .table-card-delete {
+          position: absolute; top: 10px; right: 10px;
+          background: rgba(231,76,60,0.85); border: none; color: #fff;
+          border-radius: 6px; padding: 3px 7px; cursor: pointer; font-size: 11px;
+        }
 
         /* ── Controls bar ── */
         .att-controls-bar {
@@ -374,6 +539,10 @@ function Students() {
         .att-cell.absent  { background: #fee2e2; }
         .att-cell.empty   { background: transparent; color: #cbd5e1; }
         .att-cell.month-end { border-right: 2px solid #b0c4de !important; }
+        .delete-btn {
+          background: #e74c3c; border: none; color: #fff;
+          border-radius: 6px; padding: 4px 8px; cursor: pointer; font-size: 12px;
+        }
 
         /* ── Report modal ── */
         .modal-overlay {
@@ -431,9 +600,59 @@ function Students() {
       {/* Header */}
       <div className="att-header">
         <h1>Student Attendance</h1>
-        <p>Track and manage daily attendance for the selected semester</p>
+        {activeTable ? (
+          <div className="active-table-meta">
+            <span><strong>School:</strong> {activeTable.school}</span>
+            <span><strong>Program:</strong> {activeTable.program}</span>
+            <span><strong>Course:</strong> {activeTable.course}</span>
+            <button className="back-to-tables-btn" onClick={() => setActiveTable(null)}>← All Tables</button>
+          </div>
+        ) : (
+          <p>Create or open a course attendance table</p>
+        )}
       </div>
 
+      {!activeTable ? (
+        <div className="tables-landing">
+          {/* Create new table */}
+          <form className="create-table-form" onSubmit={createTable}>
+            <h3>+ Create New Attendance Table</h3>
+            <div className="create-table-row">
+              <select value={newProgram} onChange={(e) => setNewProgram(e.target.value)}>
+                {ALL_PROGRAMS.map((p) => <option key={p} value={p}>{p}</option>)}
+              </select>
+              <input
+                type="text" placeholder="Course name (e.g. Data Structures)"
+                value={newCourse} onChange={(e) => setNewCourse(e.target.value)} required
+              />
+              <button type="submit" disabled={creating}>
+                {creating ? "Creating…" : "Create Table"}
+              </button>
+            </div>
+            <p className="school-preview">School (auto): <strong>{getSchoolForProgram(newProgram)}</strong></p>
+          </form>
+
+          {/* Existing tables */}
+          {tablesLoaded && tables.length === 0 ? (
+            <p className="no-table-msg">No Table Available — create one above to get started.</p>
+          ) : (
+            <div className="tables-grid">
+              {tables.map((t) => (
+                <div key={t.id} className="table-card" onClick={() => setActiveTable(t)}>
+                  <div className="table-card-course">{t.course}</div>
+                  <div className="table-card-meta">{t.program}</div>
+                  <div className="table-card-school">{t.school}</div>
+                  <button
+                    className="table-card-delete"
+                    onClick={(e) => { e.stopPropagation(); deleteTable(t.id); }}
+                  >🗑</button>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      ) : (
+      <>
       {/* Controls */}
       <div className="att-controls-bar">
         <div className="ctrl-group">
@@ -498,6 +717,7 @@ function Students() {
                   {shortLabel(date)}
                 </th>
               ))}
+              <th></th>
             </tr>
           </thead>
 
@@ -522,11 +742,16 @@ function Students() {
                     </td>
                   );
                 })}
+                <td>
+                  <button className="delete-btn" onClick={() => removeFromCourse(student.id, student.student_name)}>🗑</button>
+                </td>
               </tr>
             ))}
           </tbody>
         </table>
       </div>
+      </>
+      )}
 
       {/* Report Modal */}
       {showReport && (
@@ -538,7 +763,7 @@ function Students() {
             <div className="modal-actions">
               <button className="btn-outline" onClick={() => setShowReport(false)}>✕ Close</button>
               {reportRows.length > 0 && (
-                <button className="btn-green" onClick={downloadCSV}>⬇ Download CSV</button>
+                <button className="btn-green" onClick={savePDF}>⬇ Save / Share PDF</button>
               )}
             </div>
 

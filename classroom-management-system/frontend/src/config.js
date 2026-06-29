@@ -1,5 +1,4 @@
 // Centralized API base URL.
-// Change this once here, instead of hunting through every component.
-// Later, we'll swap this to your Render URL when deployed.
+// Now pointing to the live Render deployment instead of localhost.
 
-export const API_BASE_URL = "http://localhost:5000";
+export const API_BASE_URL = "https://cms-backend-9w7q.onrender.com";

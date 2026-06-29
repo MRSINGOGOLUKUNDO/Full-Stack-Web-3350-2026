@@ -133,9 +133,19 @@ app.delete("/students/:id", async (req, res) => {
   }
 });
 
-/* ─────────────────────────────────────────
-   ATTENDANCE TABLES (one per course)
-───────────────────────────────────────── */
+/* REMOVE a student from one course (keeps the student, removes just this enrollment) */
+app.delete("/students/:id/courses/:courseName", async (req, res) => {
+  try {
+    const { id, courseName } = req.params;
+    await pool.query(
+      "DELETE FROM student_courses WHERE student_id = $1 AND course_name = $2",
+      [id, courseName]
+    );
+    res.json({ message: "Removed from course" });
+  } catch (error) {
+    res.status(500).json({ error: "Server error", details: error.message });
+  }
+});
 
 /* GET all created attendance tables */
 app.get("/tables", async (req, res) => {

@@ -1,208 +1,307 @@
 import { useEffect, useState } from "react";
 import axios from "axios";
-
 import Navbar from "../components/Navbar";
 import { API_BASE_URL } from "../config";
+import { ALL_PROGRAMS } from "../constants/programs";
 
-function Home() {
+const API = `${API_BASE_URL}/students`;
 
-  const [students, setStudents] = useState([]);
+/* Live Lusaka clock — updates every second */
+function LusakaClock() {
+  const [now, setNow] = useState("");
 
-  const [studentName, setStudentName] = useState("");
-
-  const [studentId, setStudentId] = useState("");
-
-  const [course, setCourse] = useState("");
-
-  const [searchTerm, setSearchTerm] = useState("");
-
-  
-  const API = `${API_BASE_URL}/students`;
-
-  // LOAD STUDENTS
   useEffect(() => {
-
-    const fetchStudents = async () => {
-
-      try {
-
-        const response = await axios.get(API);
-
-        setStudents(response.data);
-
-      } catch (error) {
-
-        console.log(error);
-      }
+    const tick = () => {
+      const formatted = new Intl.DateTimeFormat("en-GB", {
+        timeZone: "Africa/Lusaka",
+        hour: "2-digit",
+        minute: "2-digit",
+        second: "2-digit",
+        day: "2-digit",
+        month: "short",
+        year: "numeric",
+      }).format(new Date());
+      setNow(formatted);
     };
-
-    fetchStudents();
-
+    tick();
+    const id = setInterval(tick, 1000);
+    return () => clearInterval(id);
   }, []);
 
-  // SEARCH — fixed: was using wrong class names in JSX
-  const filteredStudents = students.filter((student) =>
+  return <div className="lusaka-clock">🕐 Lusaka: {now}</div>;
+}
 
-    student.student_name
-      ?.toLowerCase()
-      .includes(searchTerm.toLowerCase())
+function Home() {
+  const [grouped, setGrouped] = useState({});
+  const [openProgram, setOpenProgram] = useState(null);
 
-  );
+  // form state
+  const [studentName, setStudentName] = useState("");
+  const [studentId, setStudentId] = useState("");
+  const [yearOfStudy, setYearOfStudy] = useState("1");
+  const [semester, setSemester] = useState("1");
+  const [program, setProgram] = useState(ALL_PROGRAMS[0]);
+  const [courseInput, setCourseInput] = useState("");
+  const [courses, setCourses] = useState([]);
 
-  // ADD STUDENT
-  const handleSubmit = async (e) => {
-
-    e.preventDefault();
-
+  const fetchGrouped = async () => {
     try {
+      const res = await axios.get(`${API}/grouped`);
+      setGrouped(res.data);
+    } catch (err) {
+      console.error(err);
+    }
+  };
 
+  // eslint-disable-next-line react-hooks/set-state-in-effect
+  useEffect(() => { fetchGrouped(); }, []);
+
+  const addCourse = () => {
+    const trimmed = courseInput.trim();
+    if (trimmed && !courses.includes(trimmed)) {
+      setCourses([...courses, trimmed]);
+    }
+    setCourseInput("");
+  };
+
+  const removeCourse = (c) => setCourses(courses.filter((x) => x !== c));
+
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    if (courses.length === 0) {
+      alert("Add at least one course for this student.");
+      return;
+    }
+    try {
       await axios.post(API, {
-
         student_name: studentName,
         student_id: studentId,
-        course: course,
-
+        year_of_study: Number(yearOfStudy),
+        semester: Number(semester),
+        program,
+        courses,
       });
+      setStudentName(""); setStudentId(""); setCourses([]); setCourseInput("");
+      await fetchGrouped();
+    } catch (err) {
+      console.error(err);
+      alert(err.response?.data?.error || "Could not add student.");
+    }
+  };
 
-      setStudentName("");
-      setStudentId("");
-      setCourse("");
-
-      // Refetch students so the list updates immediately
-      const response = await axios.get(API);
-
-      setStudents(response.data);
-
-    } catch (error) {
-
-      console.log(error);
+  const handleDelete = async (id) => {
+    if (!window.confirm("Remove this student completely?")) return;
+    try {
+      await axios.delete(`${API}/${id}`);
+      await fetchGrouped();
+    } catch (err) {
+      console.error(err);
     }
   };
 
   return (
-
     <div className="container" style={{ position: "relative" }}>
-
       <Navbar />
 
-      <h1 className="comic-text">
-        Classroom Management System
-      </h1>
+      <h1 className="comic-text">Classroom Management System</h1>
+      <LusakaClock />
 
-      {/* SEARCH — fixed class names to match App.css */}
-      <div className="search-section">
-
+      {/* REGISTRATION FORM */}
+      <form onSubmit={handleSubmit} className="reg-form">
         <input
-          type="text"
-          placeholder="Search Student..."
-          value={searchTerm}
-          onChange={(e) =>
-            setSearchTerm(e.target.value)
-          }
+          type="text" placeholder="Student Name" value={studentName}
+          onChange={(e) => setStudentName(e.target.value)} required
+        />
+        <input
+          type="text" placeholder="Student ID" value={studentId}
+          onChange={(e) => setStudentId(e.target.value)} required
         />
 
-        {/* LIVE RESULTS — fixed class names to match App.css */}
-        {searchTerm && (
+        <select value={yearOfStudy} onChange={(e) => setYearOfStudy(e.target.value)}>
+          {[1, 2, 3, 4, 5].map((y) => <option key={y} value={y}>Year {y}</option>)}
+        </select>
 
-          <div className="search-results">
+        <select value={semester} onChange={(e) => setSemester(e.target.value)}>
+          <option value="1">Semester 1</option>
+          <option value="2">Semester 2</option>
+        </select>
 
-            {filteredStudents.length > 0 ? (
+        <select value={program} onChange={(e) => setProgram(e.target.value)}>
+          {ALL_PROGRAMS.map((p) => <option key={p} value={p}>{p}</option>)}
+        </select>
 
-              filteredStudents.map((student) => (
-
-                <div
-                  key={student.id}
-                  className="search-item"
-                >
-                  {student.student_name}
-                </div>
-
-              ))
-
-            ) : (
-
-              <div className="search-item">
-                No students found
-              </div>
-
-            )}
-
+        {/* Course multi-add */}
+        <div className="course-add-row">
+          <input
+            type="text" placeholder="Add a course..." value={courseInput}
+            onChange={(e) => setCourseInput(e.target.value)}
+            onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); addCourse(); } }}
+          />
+          <button type="button" onClick={addCourse}>+ Add Course</button>
+        </div>
+        {courses.length > 0 && (
+          <div className="course-chip-row">
+            {courses.map((c) => (
+              <span key={c} className="course-chip" onClick={() => removeCourse(c)}>
+                {c} ✕
+              </span>
+            ))}
           </div>
-
         )}
 
-      </div>
-
-      {/* FORM */}
-      <form
-        onSubmit={handleSubmit}
-        className="form"
-      >
-
-        <input
-          type="text"
-          placeholder="Student Name"
-          value={studentName}
-          onChange={(e) =>
-            setStudentName(e.target.value)
-          }
-          required
-        />
-
-        <input
-          type="text"
-          placeholder="Student ID"
-          value={studentId}
-          onChange={(e) =>
-            setStudentId(e.target.value)
-          }
-          required
-        />
-
-        <input
-          type="text"
-          placeholder="Course"
-          value={course}
-          onChange={(e) =>
-            setCourse(e.target.value)
-          }
-          required
-        />
-
-        <button type="submit">
-          Add Student
-        </button>
-
+        <button type="submit" className="register-btn">Register Student</button>
       </form>
 
-      {/* STUDENT LIST */}
-      <div className="student-list">
+      {/* PROGRAM CARDS */}
+      <div className="program-grid">
+        {ALL_PROGRAMS.map((p) => {
+          const studentsInProgram = grouped[p] || [];
+          const isOpen = openProgram === p;
+          return (
+            <div key={p} className="program-block">
+              <button
+                className="program-card"
+                onClick={() => setOpenProgram(isOpen ? null : p)}
+              >
+                {p} <span className="program-count">({studentsInProgram.length})</span>
+              </button>
 
-        {students.map((student) => (
-
-          <div
-            key={student.id}
-            className="student-card"
-          >
-
-            <h3>
-              {student.student_name}
-            </h3>
-
-            <p>
-              ID: {student.student_id}
-            </p>
-
-            <p>
-              Course: {student.course}
-            </p>
-
-          </div>
-
-        ))}
-
+              {isOpen && (
+                <div className="program-table-wrap">
+                  {studentsInProgram.length === 0 ? (
+                    <p className="no-students-msg">No students registered yet.</p>
+                  ) : (
+                    <table className="program-table">
+                      <thead>
+                        <tr>
+                          <th>Student Name</th>
+                          <th>Year</th>
+                          <th>Semester</th>
+                          <th>Program</th>
+                          <th>Course</th>
+                          <th>Student ID</th>
+                          <th></th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {studentsInProgram.map((s, i) => (
+                          <tr key={s.id} style={{ animationDelay: `${i * (3500 / studentsInProgram.length)}ms` }}>
+                            <td>{s.student_name}</td>
+                            <td>{s.year_of_study ?? "—"}</td>
+                            <td>{s.semester ?? "—"}</td>
+                            <td>{s.program ?? "—"}</td>
+                            <td>
+                              <select defaultValue={s.courses?.[0]}>
+                                {(s.courses || []).map((c) => <option key={c} value={c}>{c}</option>)}
+                              </select>
+                            </td>
+                            <td>{s.student_id}</td>
+                            <td>
+                              <button className="delete-btn" onClick={() => handleDelete(s.id)}>🗑</button>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  )}
+                </div>
+              )}
+            </div>
+          );
+        })}
       </div>
 
+      <style>{`
+        .lusaka-clock {
+          text-align: left;
+          font-size: 14px;
+          color: #fff;
+          background: rgba(0,0,0,0.5);
+          display: inline-block;
+          padding: 6px 14px;
+          border-radius: 8px;
+          margin: -10px 0 24px;
+          font-family: Arial, sans-serif;
+        }
+
+        .reg-form {
+          display: flex;
+          flex-wrap: wrap;
+          gap: 12px;
+          align-items: center;
+          background: rgba(255,255,255,0.07);
+          padding: 20px;
+          border-radius: 14px;
+          margin-bottom: 30px;
+        }
+        .reg-form input, .reg-form select {
+          padding: 10px 12px;
+          border-radius: 8px;
+          border: none;
+          font-size: 14px;
+        }
+        .course-add-row { display: flex; gap: 8px; }
+        .course-add-row button {
+          padding: 8px 14px; border: none; border-radius: 8px;
+          background: #FFD700; color: #000; font-weight: bold; cursor: pointer;
+        }
+        .course-chip-row { display: flex; gap: 8px; flex-wrap: wrap; width: 100%; }
+        .course-chip {
+          background: #2d6ad0; color: #fff; padding: 6px 10px;
+          border-radius: 20px; font-size: 12px; cursor: pointer;
+        }
+        .register-btn {
+          padding: 12px 24px; border: none; border-radius: 10px;
+          background: linear-gradient(135deg, #002b5c, #00111f);
+          color: #fff; font-weight: bold; cursor: pointer;
+        }
+
+        .program-grid {
+          display: flex; flex-direction: column; gap: 14px; margin-top: 20px;
+        }
+        .program-card {
+          width: 100%; text-align: left; padding: 16px 22px;
+          border: none; border-radius: 12px; cursor: pointer;
+          font-weight: bold; font-size: 15px; color: #fff;
+          background: linear-gradient(270deg, #001f3f, #003366, #00050d, #001f3f);
+          background-size: 400% 400%;
+          animation: navyMove 9s ease infinite;
+          box-shadow: 0 4px 14px rgba(0,0,0,0.4);
+        }
+        @keyframes navyMove {
+          0% { background-position: 0% 50%; }
+          50% { background-position: 100% 50%; }
+          100% { background-position: 0% 50%; }
+        }
+        .program-count { opacity: 0.75; font-weight: normal; }
+
+        .program-table-wrap { margin-top: 8px; overflow-x: auto; }
+        .no-students-msg { color: #fff; opacity: 0.7; font-style: italic; padding: 10px; }
+
+        .program-table {
+          width: 100%; border-collapse: collapse;
+          background: #fff; border-radius: 10px; overflow: hidden;
+        }
+        .program-table thead tr { background: #1e3a8a; }
+        .program-table th {
+          color: #fff; padding: 12px; text-align: left; font-size: 13px;
+        }
+        .program-table td {
+          color: #000; padding: 10px 12px; border-bottom: 1px solid #ddd; font-size: 13px;
+        }
+        .program-table tbody tr {
+          opacity: 0;
+          animation: rowIn 0.5s ease forwards;
+        }
+        @keyframes rowIn {
+          from { opacity: 0; transform: translateY(-14px); }
+          to   { opacity: 1; transform: translateY(0); }
+        }
+        .delete-btn {
+          background: #e74c3c; border: none; color: #fff;
+          border-radius: 6px; padding: 4px 8px; cursor: pointer;
+        }
+      `}</style>
     </div>
   );
 }
