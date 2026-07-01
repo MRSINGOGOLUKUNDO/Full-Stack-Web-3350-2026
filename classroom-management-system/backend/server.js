@@ -139,7 +139,28 @@ app.delete("/students/:id", async (req, res) => {
   }
 });
 
-/* REMOVE a student from one course by code (keeps the student, removes just this enrollment) */
+/* ADD A COURSE to an existing student */
+app.post("/students/:id/courses", async (req, res) => {
+  const { id } = req.params;
+  const { course_name, course_code } = req.body;
+  if (!course_name || !course_code) {
+    return res.status(400).json({ error: "course_name and course_code are required" });
+  }
+  try {
+    await pool.query(
+      `INSERT INTO student_courses (student_id, course_name, course_code)
+       VALUES ($1, $2, $3)
+       ON CONFLICT (student_id, course_code) DO NOTHING`,
+      [id, course_name, course_code.toUpperCase()]
+    );
+    res.json({ message: "Course added" });
+  } catch (error) {
+    console.error("POST /students/:id/courses - ERROR:", error.message);
+    res.status(500).json({ error: "Server error", details: error.message });
+  }
+});
+
+/* REMOVE a student from one course by code */
 app.delete("/students/:id/courses/:courseCode", async (req, res) => {
   try {
     const { id, courseCode } = req.params;
