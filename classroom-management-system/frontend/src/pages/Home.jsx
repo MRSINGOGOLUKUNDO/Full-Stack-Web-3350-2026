@@ -41,8 +41,9 @@ function Home() {
   const [yearOfStudy, setYearOfStudy] = useState("1");
   const [semester, setSemester] = useState("1");
   const [program, setProgram] = useState(ALL_PROGRAMS[0]);
-  const [courseInput, setCourseInput] = useState("");
-  const [courses, setCourses] = useState([]);
+  const [courseNameInput, setCourseNameInput] = useState("");
+  const [courseCodeInput, setCourseCodeInput] = useState("");
+  const [courses, setCourses] = useState([]); // [{ course_name, course_code }, ...]
 
   const fetchGrouped = async () => {
     try {
@@ -57,14 +58,21 @@ function Home() {
   useEffect(() => { fetchGrouped(); }, []);
 
   const addCourse = () => {
-    const trimmed = courseInput.trim();
-    if (trimmed && !courses.includes(trimmed)) {
-      setCourses([...courses, trimmed]);
+    const name = courseNameInput.trim();
+    const code = courseCodeInput.trim().toUpperCase();
+    if (!name || !code) {
+      alert("Enter both a course name and a course code.");
+      return;
     }
-    setCourseInput("");
+    if (courses.some((c) => c.course_code === code)) {
+      alert("That course code is already added.");
+      return;
+    }
+    setCourses([...courses, { course_name: name, course_code: code }]);
+    setCourseNameInput(""); setCourseCodeInput("");
   };
 
-  const removeCourse = (c) => setCourses(courses.filter((x) => x !== c));
+  const removeCourse = (code) => setCourses(courses.filter((c) => c.course_code !== code));
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -81,7 +89,7 @@ function Home() {
         program,
         courses,
       });
-      setStudentName(""); setStudentId(""); setCourses([]); setCourseInput("");
+      setStudentName(""); setStudentId(""); setCourses([]); setCourseNameInput(""); setCourseCodeInput("");
       await fetchGrouped();
     } catch (err) {
       console.error(err);
@@ -133,8 +141,13 @@ function Home() {
         {/* Course multi-add */}
         <div className="course-add-row">
           <input
-            type="text" placeholder="Add a course..." value={courseInput}
-            onChange={(e) => setCourseInput(e.target.value)}
+            type="text" placeholder="Course code (e.g. BSE3350)" value={courseCodeInput}
+            onChange={(e) => setCourseCodeInput(e.target.value)}
+            onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); addCourse(); } }}
+          />
+          <input
+            type="text" placeholder="Course name (e.g. Data Structures)" value={courseNameInput}
+            onChange={(e) => setCourseNameInput(e.target.value)}
             onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); addCourse(); } }}
           />
           <button type="button" onClick={addCourse}>+ Add Course</button>
@@ -142,8 +155,8 @@ function Home() {
         {courses.length > 0 && (
           <div className="course-chip-row">
             {courses.map((c) => (
-              <span key={c} className="course-chip" onClick={() => removeCourse(c)}>
-                {c} ✕
+              <span key={c.course_code} className="course-chip" onClick={() => removeCourse(c.course_code)}>
+                {c.course_code} — {c.course_name} ✕
               </span>
             ))}
           </div>
@@ -191,8 +204,12 @@ function Home() {
                             <td>{s.semester ?? "—"}</td>
                             <td>{s.program ?? "—"}</td>
                             <td>
-                              <select defaultValue={s.courses?.[0]}>
-                                {(s.courses || []).map((c) => <option key={c} value={c}>{c}</option>)}
+                              <select defaultValue={s.courses?.[0]?.course_code}>
+                                {(s.courses || []).map((c) => (
+                                  <option key={c.course_code} value={c.course_code}>
+                                    {c.course_code} — {c.course_name}
+                                  </option>
+                                ))}
                               </select>
                             </td>
                             <td>{s.student_id}</td>

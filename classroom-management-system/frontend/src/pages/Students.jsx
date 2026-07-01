@@ -111,6 +111,7 @@ function Students() {
   const [activeTable,   setActiveTable]   = useState(null); // full table object {id, school, program, course}
   const [newProgram,    setNewProgram]    = useState(ALL_PROGRAMS[0]);
   const [newCourse,     setNewCourse]     = useState("");
+  const [newCourseCode, setNewCourseCode] = useState("");
   const [creating,      setCreating]      = useState(false);
 
   const fetchTables = async () => {
@@ -126,14 +127,17 @@ function Students() {
 
   const createTable = async (e) => {
     e.preventDefault();
-    if (!newCourse.trim()) return;
+    if (!newCourse.trim() || !newCourseCode.trim()) {
+      alert("Enter both a course code and a course name.");
+      return;
+    }
     setCreating(true);
     try {
       const school = getSchoolForProgram(newProgram);
       const { data } = await axios.post(`${API}/tables`, {
-        school, program: newProgram, course: newCourse.trim(),
+        school, program: newProgram, course: newCourse.trim(), course_code: newCourseCode.trim().toUpperCase(),
       });
-      setNewCourse("");
+      setNewCourse(""); setNewCourseCode("");
       await fetchTables();
       setActiveTable(data);
     } catch (err) {
@@ -259,7 +263,7 @@ function Students() {
   const removeFromCourse = async (studentId, studentName) => {
     if (!window.confirm(`Remove ${studentName} from this course's attendance table?`)) return;
     try {
-      await axios.delete(`${API}/students/${studentId}/courses/${encodeURIComponent(activeTable.course)}`);
+      await axios.delete(`${API}/students/${studentId}/courses/${encodeURIComponent(activeTable.course_code)}`);
       setStudents((prev) => prev.filter((s) => s.id !== studentId));
     } catch (err) { console.error(err); }
   };
@@ -604,7 +608,7 @@ function Students() {
           <div className="active-table-meta">
             <span><strong>School:</strong> {activeTable.school}</span>
             <span><strong>Program:</strong> {activeTable.program}</span>
-            <span><strong>Course:</strong> {activeTable.course}</span>
+            <span><strong>Course:</strong> {activeTable.course_code} — {activeTable.course}</span>
             <button className="back-to-tables-btn" onClick={() => setActiveTable(null)}>← All Tables</button>
           </div>
         ) : (
@@ -621,6 +625,10 @@ function Students() {
               <select value={newProgram} onChange={(e) => setNewProgram(e.target.value)}>
                 {ALL_PROGRAMS.map((p) => <option key={p} value={p}>{p}</option>)}
               </select>
+              <input
+                type="text" placeholder="Course code (e.g. BSE3350)"
+                value={newCourseCode} onChange={(e) => setNewCourseCode(e.target.value)} required
+              />
               <input
                 type="text" placeholder="Course name (e.g. Data Structures)"
                 value={newCourse} onChange={(e) => setNewCourse(e.target.value)} required
@@ -639,7 +647,7 @@ function Students() {
             <div className="tables-grid">
               {tables.map((t) => (
                 <div key={t.id} className="table-card" onClick={() => setActiveTable(t)}>
-                  <div className="table-card-course">{t.course}</div>
+                  <div className="table-card-course">{t.course_code} — {t.course}</div>
                   <div className="table-card-meta">{t.program}</div>
                   <div className="table-card-school">{t.school}</div>
                   <button

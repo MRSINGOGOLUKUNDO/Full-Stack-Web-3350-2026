@@ -25,8 +25,9 @@ app.get("/students", async (req, res) => {
     const result = await pool.query(
       `SELECT s.*,
               COALESCE(
-                array_agg(sc.course_name) FILTER (WHERE sc.course_name IS NOT NULL),
-                '{}'
+                json_agg(json_build_object('course_name', sc.course_name, 'course_code', sc.course_code))
+                  FILTER (WHERE sc.course_name IS NOT NULL),
+                '[]'
               ) AS courses
        FROM students s
        LEFT JOIN student_courses sc ON sc.student_id = s.id
@@ -46,8 +47,9 @@ app.get("/students/grouped", async (req, res) => {
     const result = await pool.query(
       `SELECT s.*,
               COALESCE(
-                array_agg(sc.course_name) FILTER (WHERE sc.course_name IS NOT NULL),
-                '{}'
+                json_agg(json_build_object('course_name', sc.course_name, 'course_code', sc.course_code))
+                  FILTER (WHERE sc.course_name IS NOT NULL),
+                '[]'
               ) AS courses
        FROM students s
        LEFT JOIN student_courses sc ON sc.student_id = s.id
@@ -68,12 +70,16 @@ app.get("/students/grouped", async (req, res) => {
   }
 });
 
-/* ADD STUDENT — now with program, year, semester, and multiple courses */
+/* ADD STUDENT — now with program, year, semester, and multiple courses (name + code) */
 app.post("/students", async (req, res) => {
   const { student_name, student_id, year_of_study, semester, program, courses } = req.body;
+  // courses: [{ course_name, course_code }, ...]
 
   if (!student_name || !student_id || !program || !Array.isArray(courses) || courses.length === 0) {
     return res.status(400).json({ error: "student_name, student_id, program, and at least one course are required" });
+  }
+  if (courses.some((c) => !c.course_name || !c.course_code)) {
+    return res.status(400).json({ error: "Each course needs both a name and a code" });
   }
 
   const client = await pool.connect();
@@ -84,15 +90,15 @@ app.post("/students", async (req, res) => {
       `INSERT INTO students (student_name, student_id, course, year_of_study, semester, program)
        VALUES ($1, $2, $3, $4, $5, $6)
        RETURNING id`,
-      [student_name, student_id, courses[0], year_of_study || null, semester || null, program]
+      [student_name, student_id, courses[0].course_name, year_of_study || null, semester || null, program]
     );
     const newId = studentResult.rows[0].id;
 
-    for (const courseName of courses) {
+    for (const { course_name, course_code } of courses) {
       await client.query(
-        `INSERT INTO student_courses (student_id, course_name) VALUES ($1, $2)
-         ON CONFLICT (student_id, course_name) DO NOTHING`,
-        [newId, courseName]
+        `INSERT INTO student_courses (student_id, course_name, course_code) VALUES ($1, $2, $3)
+         ON CONFLICT (student_id, course_code) DO NOTHING`,
+        [newId, course_name, course_code]
       );
     }
 
@@ -133,13 +139,13 @@ app.delete("/students/:id", async (req, res) => {
   }
 });
 
-/* REMOVE a student from one course (keeps the student, removes just this enrollment) */
-app.delete("/students/:id/courses/:courseName", async (req, res) => {
+/* REMOVE a student from one course by code (keeps the student, removes just this enrollment) */
+app.delete("/students/:id/courses/:courseCode", async (req, res) => {
   try {
-    const { id, courseName } = req.params;
+    const { id, courseCode } = req.params;
     await pool.query(
-      "DELETE FROM student_courses WHERE student_id = $1 AND course_name = $2",
-      [id, courseName]
+      "DELETE FROM student_courses WHERE student_id = $1 AND course_code = $2",
+      [id, courseCode]
     );
     res.json({ message: "Removed from course" });
   } catch (error) {
@@ -160,19 +166,21 @@ app.get("/tables", async (req, res) => {
   }
 });
 
-/* CREATE a new attendance table for a course (school/program/course) */
+/* CREATE a new attendance table for a course, scoped by program+code
+   (so e.g. Cyber Security's BSE3350 and Software Engineering's BSE3350
+   are two completely separate tables) */
 app.post("/tables", async (req, res) => {
-  const { school, program, course, created_by } = req.body;
-  if (!school || !program || !course) {
-    return res.status(400).json({ error: "school, program, and course are required" });
+  const { school, program, course, course_code, created_by } = req.body;
+  if (!school || !program || !course || !course_code) {
+    return res.status(400).json({ error: "school, program, course, and course_code are required" });
   }
   try {
     const result = await pool.query(
-      `INSERT INTO attendance_tables (school, program, course, created_by)
-       VALUES ($1, $2, $3, $4)
-       ON CONFLICT (course) DO UPDATE SET course = EXCLUDED.course
+      `INSERT INTO attendance_tables (school, program, course, course_code, created_by)
+       VALUES ($1, $2, $3, $4, $5)
+       ON CONFLICT (program, course_code) DO UPDATE SET course = EXCLUDED.course
        RETURNING *`,
-      [school, program, course, created_by || null]
+      [school, program, course, course_code, created_by || null]
     );
     res.json(result.rows[0]);
   } catch (error) {
@@ -192,19 +200,20 @@ app.get("/tables/:id", async (req, res) => {
   }
 });
 
-/* GET students enrolled in a table's course */
+/* GET students enrolled in a table's course — matched by program AND course_code,
+   so only students of the SAME program doing that exact course code appear */
 app.get("/tables/:id/students", async (req, res) => {
   try {
     const tableResult = await pool.query("SELECT * FROM attendance_tables WHERE id = $1", [req.params.id]);
     if (tableResult.rows.length === 0) return res.status(404).json({ error: "Table not found" });
-    const { course } = tableResult.rows[0];
+    const { program, course_code } = tableResult.rows[0];
 
     const studentsResult = await pool.query(
       `SELECT s.* FROM students s
        JOIN student_courses sc ON sc.student_id = s.id
-       WHERE sc.course_name = $1
+       WHERE sc.course_code = $1 AND s.program = $2
        ORDER BY s.student_name ASC`,
-      [course]
+      [course_code, program]
     );
     res.json(studentsResult.rows);
   } catch (error) {
@@ -295,15 +304,15 @@ app.get("/attendance/report", async (req, res) => {
       return res.status(400).json({ error: "table_id, start, and end query params required" });
     }
 
-    const tableResult = await pool.query("SELECT course FROM attendance_tables WHERE id = $1", [table_id]);
+    const tableResult = await pool.query("SELECT program, course_code FROM attendance_tables WHERE id = $1", [table_id]);
     if (tableResult.rows.length === 0) return res.status(404).json({ error: "Table not found" });
-    const { course } = tableResult.rows[0];
+    const { program, course_code } = tableResult.rows[0];
 
     const result = await pool.query(
       `SELECT
          s.id              AS student_id,
          s.student_name,
-         $3::text          AS course,
+         sc.course_name    AS course,
          COUNT(a.id)                                          AS total_days,
          COUNT(a.id) FILTER (WHERE a.status = 'present')     AS present_days,
          COUNT(a.id) FILTER (WHERE a.status = 'absent')      AS absent_days,
@@ -312,15 +321,15 @@ app.get("/attendance/report", async (req, res) => {
            / NULLIF(COUNT(a.id), 0) * 100, 1
          )                                                    AS percentage
        FROM students s
-       JOIN student_courses sc ON sc.student_id = s.id AND sc.course_name = $3
+       JOIN student_courses sc ON sc.student_id = s.id AND sc.course_code = $3 AND s.program = $5
        LEFT JOIN attendance a
          ON a.student_id = s.id
          AND a.table_id = $1
          AND a.date >= $2
          AND a.date <= $4
-       GROUP BY s.id, s.student_name
+       GROUP BY s.id, s.student_name, sc.course_name
        ORDER BY s.student_name ASC`,
-      [table_id, start, course, end]
+      [table_id, start, course_code, end, program]
     );
 
     res.json(result.rows);
