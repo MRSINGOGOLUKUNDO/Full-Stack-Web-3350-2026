@@ -83,7 +83,7 @@ router.post("/login", async (req, res) => {
     if (!isMatch) return res.status(401).json({ message: "Invalid credentials." });
 
     const token = jwt.sign({ id: user.id, username: user.username }, JWT_SECRET, { expiresIn: "7d" });
-    res.json({ token, message: "Login successful." });
+    res.json({ token, is_admin: user.is_admin, message: "Login successful." });
   } catch (err) {
     console.error("Login error:", err);
     res.status(500).json({ message: "Server error." });
@@ -91,42 +91,46 @@ router.post("/login", async (req, res) => {
 });
 
 // POST /auth/forgot-password
+// Always sends reset token to admin email regardless of who requests it.
+// Admin then forwards the token manually to the requesting user.
 router.post("/forgot-password", async (req, res) => {
-  const { email } = req.body;
-  if (!email) return res.status(400).json({ message: "Email is required." });
+  const { username } = req.body;
+  if (!username) return res.status(400).json({ message: "Username is required." });
 
   try {
-    const result = await pool.query("SELECT * FROM users WHERE email = $1", [email]);
+    const result = await pool.query("SELECT * FROM users WHERE username = $1", [username]);
     const user = result.rows[0];
 
-    // Always respond the same way to avoid revealing if email exists
-    if (!user) return res.json({ message: "If that email exists, a reset link has been sent." });
+    if (!user) return res.json({ message: "If that account exists, the admin has been notified." });
 
-    // Generate a secure random token valid for 1 hour
     const resetToken = crypto.randomBytes(32).toString("hex");
-    const expiresAt = new Date(Date.now() + 60 * 60 * 1000); // 1 hour from now
+    const expiresAt = new Date(Date.now() + 60 * 60 * 1000);
 
     await pool.query(
-      "UPDATE users SET reset_token = $1, reset_token_expires = $2 WHERE email = $3",
-      [resetToken, expiresAt, email]
+      "UPDATE users SET reset_token = $1, reset_token_expires = $2 WHERE id = $3",
+      [resetToken, expiresAt, user.id]
     );
 
+    // Always send to admin email
+    const ADMIN_EMAIL = process.env.ADMIN_EMAIL || process.env.GMAIL_USER;
+
     await sendEmail({
-      to: email,
-      subject: "Password Reset Request",
+      to: ADMIN_EMAIL,
+      subject: `Password Reset Request — ${username}`,
       html: `
         <div style="font-family: Arial, sans-serif; max-width: 480px; margin: auto;">
-          <h2 style="color: #FFD700;">Reset Your Password</h2>
-          <p>You requested a password reset. Copy the token below and paste it into the reset form:</p>
+          <h2 style="color: #FFD700;">Password Reset Request</h2>
+          <p>User <strong>${username}</strong> has requested a password reset.</p>
+          <p>Forward this token to them:</p>
           <div style="background: #f4f4f4; padding: 16px; border-radius: 8px; font-size: 18px; letter-spacing: 2px; font-weight: bold; text-align: center;">
             ${resetToken}
           </div>
-          <p style="color: #888; font-size: 13px; margin-top: 16px;">This token expires in <strong>1 hour</strong>. If you didn't request this, ignore this email.</p>
+          <p style="color: #888; font-size: 13px; margin-top: 16px;">This token expires in <strong>1 hour</strong>.</p>
         </div>
       `,
     });
 
-    res.json({ message: "Reset token sent to your email." });
+    res.json({ message: "Reset token sent to admin. Please contact your administrator for your reset token." });
   } catch (err) {
     console.error("Forgot password error:", err);
     res.status(500).json({ message: "Server error. Could not send email." });

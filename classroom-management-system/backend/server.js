@@ -3,25 +3,103 @@ console.log("GMAIL_USER:", JSON.stringify(process.env.GMAIL_USER));
 console.log("GMAIL_PASS length:", process.env.GMAIL_PASS?.length);
 const express = require("express");
 const cors = require("cors");
+const jwt = require("jsonwebtoken");
 const pool = require("./db");
 
 const app = express();
+const JWT_SECRET = process.env.JWT_SECRET || "your_jwt_secret_change_this";
 
-// IMPORTANT: cors and json middleware must come BEFORE routes
 app.use(cors());
 app.use(express.json());
 
-// Auth routes
+// Auth routes (public)
 const authRoutes = require("./routes/authRoutes");
 app.use("/auth", authRoutes);
+
+/* ─────────────────────────────────────────
+   JWT MIDDLEWARE — protects all routes below
+   Attaches req.user = { id, username, is_admin }
+───────────────────────────────────────── */
+const authenticate = async (req, res, next) => {
+  const header = req.headers.authorization;
+  if (!header || !header.startsWith("Bearer ")) {
+    return res.status(401).json({ error: "Unauthorized" });
+  }
+  try {
+    const token = header.split(" ")[1];
+    const decoded = jwt.verify(token, JWT_SECRET);
+    // fetch is_admin from DB (not stored in token so it stays current)
+    const result = await pool.query("SELECT id, username, is_admin FROM users WHERE id = $1", [decoded.id]);
+    if (result.rows.length === 0) return res.status(401).json({ error: "User not found" });
+    req.user = result.rows[0];
+    next();
+  } catch {
+    return res.status(401).json({ error: "Invalid token" });
+  }
+};
+
+app.use(authenticate);
+
+/* ─────────────────────────────────────────
+   PROGRAMS ROUTES (user-defined, scoped per user)
+───────────────────────────────────────── */
+
+/* GET programs — admin sees all, others see own */
+app.get("/programs", async (req, res) => {
+  try {
+    const filter = req.user.is_admin ? "" : "WHERE created_by = $1";
+    const params = req.user.is_admin ? [] : [req.user.id];
+    const result = await pool.query(
+      `SELECT * FROM programs ${filter} ORDER BY school, name ASC`,
+      params
+    );
+    res.json(result.rows);
+  } catch (error) {
+    res.status(500).json({ error: "Server error", details: error.message });
+  }
+});
+
+/* CREATE a program */
+app.post("/programs", async (req, res) => {
+  const { name, school } = req.body;
+  if (!name || !school) return res.status(400).json({ error: "name and school are required" });
+  try {
+    const result = await pool.query(
+      `INSERT INTO programs (name, school, created_by) VALUES ($1, $2, $3)
+       ON CONFLICT (name, created_by) DO NOTHING RETURNING *`,
+      [name, school, req.user.id]
+    );
+    if (result.rows.length === 0) return res.status(409).json({ error: "Program already exists" });
+    res.json(result.rows[0]);
+  } catch (error) {
+    res.status(500).json({ error: "Server error", details: error.message });
+  }
+});
+
+/* DELETE a program */
+app.delete("/programs/:id", async (req, res) => {
+  try {
+    const ownerCheck = await pool.query("SELECT created_by FROM programs WHERE id = $1", [req.params.id]);
+    if (ownerCheck.rows.length === 0) return res.status(404).json({ error: "Program not found" });
+    if (!req.user.is_admin && ownerCheck.rows[0].created_by !== req.user.id) {
+      return res.status(403).json({ error: "Forbidden" });
+    }
+    await pool.query("DELETE FROM programs WHERE id = $1", [req.params.id]);
+    res.json({ message: "Program deleted" });
+  } catch (error) {
+    res.status(500).json({ error: "Server error", details: error.message });
+  }
+});
 
 /* ─────────────────────────────────────────
    STUDENT ROUTES
 ───────────────────────────────────────── */
 
-/* GET STUDENTS — flat list (kept for backward compatibility) */
+/* GET STUDENTS — scoped by user (admin sees all) */
 app.get("/students", async (req, res) => {
   try {
+    const filter = req.user.is_admin ? "" : "WHERE s.created_by = $1";
+    const params = req.user.is_admin ? [] : [req.user.id];
     const result = await pool.query(
       `SELECT s.*,
               COALESCE(
@@ -31,8 +109,10 @@ app.get("/students", async (req, res) => {
               ) AS courses
        FROM students s
        LEFT JOIN student_courses sc ON sc.student_id = s.id
+       ${filter}
        GROUP BY s.id
-       ORDER BY s.student_name ASC`
+       ORDER BY s.student_name ASC`,
+      params
     );
     res.json(result.rows);
   } catch (error) {
@@ -41,9 +121,11 @@ app.get("/students", async (req, res) => {
   }
 });
 
-/* GET STUDENTS GROUPED BY PROGRAM — powers the Home page program cards */
+/* GET STUDENTS GROUPED BY PROGRAM — scoped by user */
 app.get("/students/grouped", async (req, res) => {
   try {
+    const filter = req.user.is_admin ? "" : "WHERE s.created_by = $1";
+    const params = req.user.is_admin ? [] : [req.user.id];
     const result = await pool.query(
       `SELECT s.*,
               COALESCE(
@@ -53,10 +135,11 @@ app.get("/students/grouped", async (req, res) => {
               ) AS courses
        FROM students s
        LEFT JOIN student_courses sc ON sc.student_id = s.id
+       ${filter}
        GROUP BY s.id
-       ORDER BY s.student_name ASC`
+       ORDER BY s.student_name ASC`,
+      params
     );
-
     const grouped = {};
     for (const student of result.rows) {
       const program = student.program || "Unassigned";
@@ -87,10 +170,10 @@ app.post("/students", async (req, res) => {
     await client.query("BEGIN");
 
     const studentResult = await client.query(
-      `INSERT INTO students (student_name, student_id, course, year_of_study, semester, program)
-       VALUES ($1, $2, $3, $4, $5, $6)
+      `INSERT INTO students (student_name, student_id, course, year_of_study, semester, program, created_by)
+       VALUES ($1, $2, $3, $4, $5, $6, $7)
        RETURNING id`,
-      [student_name, student_id, courses[0].course_name, year_of_study || null, semester || null, program]
+      [student_name, student_id, courses[0].course_name, year_of_study || null, semester || null, program, req.user.id]
     );
     const newId = studentResult.rows[0].id;
 
@@ -174,11 +257,14 @@ app.delete("/students/:id/courses/:courseCode", async (req, res) => {
   }
 });
 
-/* GET all created attendance tables */
+/* GET all attendance tables — scoped by user (admin sees all) */
 app.get("/tables", async (req, res) => {
   try {
+    const filter = req.user.is_admin ? "" : "WHERE created_by = $1";
+    const params = req.user.is_admin ? [] : [req.user.id];
     const result = await pool.query(
-      "SELECT * FROM attendance_tables ORDER BY created_at DESC"
+      `SELECT * FROM attendance_tables ${filter} ORDER BY created_at DESC`,
+      params
     );
     res.json(result.rows);
   } catch (error) {
@@ -201,7 +287,7 @@ app.post("/tables", async (req, res) => {
        VALUES ($1, $2, $3, $4, $5)
        ON CONFLICT (program, course_code) DO UPDATE SET course = EXCLUDED.course
        RETURNING *`,
-      [school, program, course, course_code, created_by || null]
+      [school, program, course, course_code, req.user.id]
     );
     res.json(result.rows[0]);
   } catch (error) {
